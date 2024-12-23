@@ -1,139 +1,83 @@
-import useSWR from "swr";
-import Image from "next/image";
-import {
-  POLYGON_TOKENS_BY_SYMBOL,
-  POLYGON_TOKENS_BY_ADDRESS,
-} from "../../lib/constants";
-import { fetcher } from "../Price";
-import type { PriceResponse, QuoteResponse } from "../api/types";
-import { formatUnits } from "ethers";
-import {
-  useAccount,
-  useSendTransaction,
-  usePrepareSendTransaction,
-  type Address,
-} from "wagmi";
+import { useEffect, useState } from 'react';
+import { useAccount } from 'wagmi';
 
-const AFFILIATE_FEE = 0.01; // Percentage of the buyAmount that should be attributed to feeRecipient as affiliate fees
-const FEE_RECIPIENT = "0x75A94931B81d81C7a62b76DC0FcFAC77FbE1e917"; // The ETH address that should receive affiliate fees
+interface QuoteViewProps {
+  setFinalize: (value: boolean) => void;
+  price: any;
+  setQuote: (quote: any) => void;
+  quote: any;
+  tradeDirection: string;
+}
 
 export default function QuoteView({
+  setFinalize,
   price,
-  quote,
   setQuote,
-  takerAddress,
-}: {
-  price: PriceResponse;
-  quote: QuoteResponse | undefined;
-  setQuote: (price: any) => void;
-  takerAddress: Address | undefined;
-}) {
-  const sellTokenInfo =
-    POLYGON_TOKENS_BY_ADDRESS[price.sellTokenAddress.toLowerCase()];
-
-  const buyTokenInfo =
-    POLYGON_TOKENS_BY_ADDRESS[price.buyTokenAddress.toLowerCase()];
-
-  // fetch quote here
+  quote,
+  tradeDirection,
+}: QuoteViewProps) {
   const { address } = useAccount();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const { isLoading: isLoadingPrice } = useSWR(
-    [
-      "/api/quote",
-      {
-        sellToken: price.sellTokenAddress,
-        buyToken: price.buyTokenAddress,
-        sellAmount: price.sellAmount,
-        // buyAmount: TODO if we want to support buys,
-        takerAddress,
-        feeRecipient: FEE_RECIPIENT,
-        buyTokenPercentageFee: AFFILIATE_FEE,
-      },
-    ],
-    fetcher,
-    {
-      onSuccess: (data) => {
+  useEffect(() => {
+    const getQuote = async () => {
+      if (!address || !price) return;
+      
+      setError(null);
+      setLoading(true);
+      
+      try {
+        const queryParams = new URLSearchParams({
+          ...price,
+          takerAddress: address
+        });
+        
+        const response = await fetch(`/api/quote?${queryParams}`);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
         setQuote(data);
-        console.log("quote", data);
-        console.log(formatUnits(data.buyAmount, buyTokenInfo.decimals), data);
-      },
-    }
-  );
+      } catch (error) {
+        console.error('Error fetching quote:', error);
+        setError('Failed to fetch quote. Please try again.');
+        setQuote(null);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const { config } = usePrepareSendTransaction({
-    to: quote?.to, // The address of the contract to send call data to, in this case 0x Exchange Proxy
-    data: quote?.data, // The call data required to be sent to the to contract address.
-  });
-
-  const { sendTransaction } = useSendTransaction(config);
-
-  if (!quote) {
-    return <div>Getting best quote...</div>;
-  }
-
-  console.log("quote", quote);
-  console.log(formatUnits(quote.sellAmount, sellTokenInfo.decimals));
+    getQuote();
+  }, [address, price, setQuote]);
 
   return (
-    <div className="p-3 mx-auto max-w-screen-sm ">
-      <form>
-        <div className="bg-slate-200 dark:bg-slate-800 p-4 rounded-sm mb-3">
-          <div className="text-xl mb-2 text-white">You pay</div>
-          <div className="flex items-center text-lg sm:text-3xl text-white">
-            <img
-              alt={sellTokenInfo.symbol}
-              className="h-9 w-9 mr-2 rounded-md"
-              src={sellTokenInfo.logoURI}
-            />
-            <span>{formatUnits(quote.sellAmount, sellTokenInfo.decimals)}</span>
-            <div className="ml-2">{sellTokenInfo.symbol}</div>
+    <div className="p-4 bg-gray-800 rounded-lg">
+      <div className="mb-4">
+        <h2 className="text-xl font-bold mb-4">Quote Summary</h2>
+        {loading ? (
+          <div className="text-center py-4">
+            <p>Loading quote...</p>
           </div>
-        </div>
-
-        <div className="bg-slate-200 dark:bg-slate-800 p-4 rounded-sm mb-3">
-          <div className="text-xl mb-2 text-white">You receive</div>
-          <div className="flex items-center text-lg sm:text-3xl text-white">
-            <img
-              alt={
-                POLYGON_TOKENS_BY_ADDRESS[price.buyTokenAddress.toLowerCase()]
-                  .symbol
-              }
-              className="h-9 w-9 mr-2 rounded-md"
-              src={
-                POLYGON_TOKENS_BY_ADDRESS[price.buyTokenAddress.toLowerCase()]
-                  .logoURI
-              }
-            />
-            <span>{formatUnits(quote.buyAmount, buyTokenInfo.decimals)}</span>
-            <div className="ml-2">{buyTokenInfo.symbol}</div>
+        ) : error ? (
+          <div className="text-red-500 py-2">{error}</div>
+        ) : quote ? (
+          <div className="space-y-2">
+            <p>Price: {quote.price}</p>
+            <p>Gas Estimate: {quote.estimatedGas}</p>
+            <p>Price Impact: {quote.estimatedPriceImpact}%</p>
           </div>
-        </div>
-        <div className="bg-slate-200 dark:bg-slate-800 p-4 rounded-sm mb-3">
-          <div className="text-slate-400">
-            {quote && quote.grossBuyAmount
-              ? "Affiliate Fee: " +
-                Number(
-                  formatUnits(
-                    BigInt(quote.grossBuyAmount),
-                    buyTokenInfo.decimals
-                  )
-                ) *
-                  AFFILIATE_FEE +
-                " " +
-                buyTokenInfo.symbol
-              : null}
-          </div>
-        </div>
-      </form>
-
+        ) : (
+          <p>No quote available</p>
+        )}
+      </div>
       <button
-        className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full"
-        onClick={() => {
-          console.log("submitting quote to blockchain");
-          sendTransaction && sendTransaction();
-        }}
+        onClick={() => setFinalize(false)}
+        className="w-full p-2 bg-blue-600 rounded hover:bg-blue-700 transition-colors"
       >
-        Place Order
+        Back
       </button>
     </div>
   );
